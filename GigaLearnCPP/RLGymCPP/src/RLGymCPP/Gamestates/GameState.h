@@ -1,4 +1,6 @@
 #pragma once
+#include <string>
+
 #include "Player.h"
 #include "../CommonValues.h"
 #include "../BasicTypes/Action.h"
@@ -26,6 +28,7 @@ namespace RLGC {
 		bool goalScored = false; // If the ball is in the goal
 		int lastTouchCarID = -1;
 		std::vector<Player> players;
+		std::string scenarioName = {};
 
 		BallState ball;
 

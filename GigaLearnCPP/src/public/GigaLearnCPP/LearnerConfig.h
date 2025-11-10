@@ -1,7 +1,15 @@
 #pragma once
+#include <filesystem>
+#include <functional>
+#include <optional>
+
 #include <RLGymCPP/BasicTypes/Lists.h>
 #include "PPO/PPOLearnerConfig.h"
 #include "SkillTrackerConfig.h"
+
+namespace MyGL {
+	struct Scenario;
+}
 
 namespace GGL {
 	enum class LearnerDeviceType {
@@ -52,6 +60,7 @@ namespace GGL {
 		bool addRewardsToMetrics = true;
 		int maxRewardSamples = 50; // Maximum reward samples per step for reward metrics
 		int rewardSampleRandInterval = 8; // Randomized interval range between sampling rewards (per step)
+		int scenarioRewardLogInterval = 512; // Steps between logging scenario-specific reward averages
 
 		// Send metrics to the python metrics receiver
 		// The receiver can then log them to wandb or whatever
@@ -68,5 +77,8 @@ namespace GGL {
 		float trainAgainstOldChance = 0.15f; // Chance (from 0 - 1) that an iteration will train against an old version
 
 		SkillTrackerConfig skillTracker = {};
+		std::function<std::optional<MyGL::Scenario>(int index)> scenarioProvider;
+
+		std::filesystem::path loadPretrainedModelPath = {};
 	};
 }

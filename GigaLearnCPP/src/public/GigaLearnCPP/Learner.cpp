@@ -87,6 +87,7 @@ GGL::Learner::Learner(EnvCreateFn envCreateFn, LearnerConfig config, StepCallbac
 		envSetConfig.tickSkip = config.tickSkip;
 		envSetConfig.actionDelay = config.actionDelay;
 		envSetConfig.saveRewards = config.addRewardsToMetrics;
+		envSetConfig.scenarioProvider = config.scenarioProvider;
 		envSet = new RLGC::EnvSet(envSetConfig);
 		obsSize = envSet->state.obs.size[1];
 		numActions = envSet->actionParsers[0]->GetActionAmount();
@@ -111,6 +112,15 @@ GGL::Learner::Learner(EnvCreateFn envCreateFn, LearnerConfig config, StepCallbac
 		ppo = new PPOLearner(obsSize, numActions, config.ppo, device);
 	} catch (std::exception& e) {
 		RG_ERR_CLOSE("Failed to create PPO learner: " << e.what());
+	}
+
+	if (!config.loadPretrainedModelPath.empty()) {
+		if (std::filesystem::exists(config.loadPretrainedModelPath) && std::filesystem::is_directory(config.loadPretrainedModelPath)) {
+			RG_LOG("\tLoading pretrained model from " << config.loadPretrainedModelPath);
+			ppo->LoadFrom(config.loadPretrainedModelPath);
+		} else {
+			RG_LOG("\tPretrained path " << config.loadPretrainedModelPath << " is missing or not a directory; skipping load");
+		}
 	}
 
 	if (config.renderMode) {

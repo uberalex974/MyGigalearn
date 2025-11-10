@@ -1,5 +1,6 @@
 #include "EnvSet.h"
 #include  "../Rewards/ZeroSumReward.h"
+#include <algorithm>
 
 template<bool RLGC::PlayerEventState::* DATA_VAR>
 void IncPlayerCounter(Car* car, void* userInfoPtr) {
@@ -38,6 +39,65 @@ void _BumpCallback(Arena* arena, Car* bumper, Car* victim, bool isDemo, void* us
 	if (isDemo) {
 		IncPlayerCounter<&RLGC::PlayerEventState::demo>(bumper, userInfo);
 		IncPlayerCounter<&RLGC::PlayerEventState::demoed>(victim, userInfo);
+	}
+}
+
+
+namespace {
+	// Apply a MyGL scenario override on top of the default arena reset.
+	void ApplyScenarioToArena(Arena* arena, const MyGL::GameState& state) {
+		if (!arena)
+			return;
+
+		// Ball placement from scenario
+		BallState ballState = arena->ball->GetState();
+		ballState.pos = Vec(state.ballPosX, state.ballPosY, state.ballPosZ);
+		ballState.vel = Vec(state.ballVelX, state.ballVelY, state.ballVelZ);
+		arena->ball->SetState(ballState);
+
+		// Prefer controlling the BLUE car so self-play stays consistent
+		Car* primaryCar = nullptr;
+		for (Car* car : arena->_cars) {
+			if (!car)
+				continue;
+			if (car->team == Team::BLUE) {
+				primaryCar = car;
+				break;
+			}
+		}
+		if (!primaryCar && !arena->_cars.empty())
+			primaryCar = *arena->_cars.begin();
+		if (!primaryCar)
+			return;
+
+		CarState carState = primaryCar->GetState();
+		carState.pos = Vec(state.carPosX, state.carPosY, state.carPosZ);
+		carState.vel = Vec(state.carVelX, state.carVelY, state.carVelZ);
+		carState.angVel = Vec(0, 0, 0);
+		Angle orientation(state.carYaw, state.carPitch, state.carRoll);
+		carState.rotMat = orientation.ToRotMat();
+		carState.boost = std::clamp(state.carBoost, 0.f, 100.f);
+
+		bool onGround = state.carPosZ <= (RLConst::CAR_SPAWN_REST_Z + 25.f);
+		carState.isOnGround = onGround;
+		carState.worldContact.hasContact = onGround;
+		carState.hasJumped = false;
+		carState.hasDoubleJumped = false;
+		carState.hasFlipped = false;
+		carState.isJumping = false;
+		carState.airTime = 0;
+		carState.airTimeSinceJump = 0;
+		carState.supersonicTime = 0;
+		carState.isSupersonic = false;
+		carState.flipTime = 0;
+		carState.jumpTime = 0;
+		carState.timeSpentBoosting = 0;
+		carState.handbrakeVal = 0;
+		carState.lastControls = {};
+		carState.carContact = {};
+		carState.ballHitInfo = CarState().ballHitInfo;
+
+		primaryCar->SetState(carState);
 	}
 }
 
@@ -89,6 +149,8 @@ RLGC::EnvSet::EnvSet(const EnvSetConfig& config) : config(config) {
 	g_ThreadPool.StartBatchedJobs(fnCreateArenas, config.numArenas, false);
 
 	state.Resize(arenas);
+	scenarioCache.resize(arenas.size());
+	scenarioNames.resize(arenas.size());
 	
 	// Determine obs size and action amount, initialize arrays accordingly
 	{
@@ -104,7 +166,7 @@ RLGC::EnvSet::EnvSet(const EnvSetConfig& config) : config(config) {
 
 	// Reset all arenas initially
 	g_ThreadPool.StartBatchedJobs(
-		std::bind(&RLGC::EnvSet::ResetArena, this, std::placeholders::_1),
+		[this](int idx) { ResetArena(idx); },
 		config.numArenas, false
 	);
 	
@@ -254,9 +316,28 @@ void RLGC::EnvSet::StepSecondHalf(const IList& actionIndices, bool async) {
 	g_ThreadPool.StartBatchedJobs(fnStepArenas, arenas.size(), async);
 }
 
-void RLGC::EnvSet::ResetArena(int index) {
+void RLGC::EnvSet::ResetArena(int index, const MyGL::GameState* scenarioState) {
+	const MyGL::GameState* appliedScenarioState = scenarioState;
+	if (!appliedScenarioState && config.scenarioProvider) {
+		auto maybeScenario = config.scenarioProvider(index);
+		if (maybeScenario.has_value()) {
+			scenarioCache[index] = *maybeScenario;
+			scenarioNames[index] = scenarioCache[index].name;
+			appliedScenarioState = &scenarioCache[index].initial_state;
+		} else {
+			scenarioNames[index].clear();
+		}
+	} else if (appliedScenarioState) {
+		scenarioNames[index] = "manual";
+	} else {
+		scenarioNames[index].clear();
+	}
+
 	stateSetters[index]->ResetArena(arenas[index]);
+	if (appliedScenarioState)
+		ApplyScenarioToArena(arenas[index], *appliedScenarioState);
 	GameState newState = GameState(arenas[index]);
+	newState.scenarioName = scenarioNames[index];
 	state.gameStates[index] = newState;
 
 	newState.userInfo = userInfos[index];
@@ -291,7 +372,7 @@ void RLGC::EnvSet::ResetArena(int index) {
 void RLGC::EnvSet::Reset() {
 	for (int i = 0; i < arenas.size(); i++)
 		if (state.terminals[i])
-			g_ThreadPool.StartJobAsync(std::bind(&EnvSet::ResetArena, this, std::placeholders::_1), i);
+			g_ThreadPool.StartJobAsync([this](int idx) { ResetArena(idx); }, i);
 	std::fill(state.terminals.begin(), state.terminals.end(), 0);
 	g_ThreadPool.WaitUntilDone();
 }

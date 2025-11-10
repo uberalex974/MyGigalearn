@@ -1,5 +1,10 @@
 #pragma once
+#include <functional>
+#include <optional>
+#include <string>
+
 #include "../Gamestates/GameState.h"
+#include "../../../../../src/Scenario.h"
 #include "../BasicTypes/Action.h"
 #include "../TerminalConditions/TerminalCondition.h"
 #include "../Rewards/Reward.h"
@@ -30,6 +35,7 @@ namespace RLGC {
 		int actionDelay;
 		bool saveRewards;
 		bool shuffleRewardSampling = true;
+		std::function<std::optional<MyGL::Scenario>(int index)> scenarioProvider;
 	};
 
 	struct EnvState {
@@ -83,6 +89,8 @@ namespace RLGC {
 		std::vector<ObsBuilder*> obsBuilders;
 		std::vector<ActionParser*> actionParsers;
 		std::vector<StateSetter*> stateSetters;
+		std::vector<MyGL::Scenario> scenarioCache;
+		std::vector<std::string> scenarioNames;
 
 		EnvState state = {};
 
@@ -105,7 +113,7 @@ namespace RLGC {
 		void StepFirstHalf(bool async);
 		void StepSecondHalf(const IList& actionIndices, bool async);
 		void Sync() { g_ThreadPool.WaitUntilDone(); }
-		void ResetArena(int index);
+		void ResetArena(int index, const MyGL::GameState* scenarioState = nullptr);
 		void Reset();
 	};
 }

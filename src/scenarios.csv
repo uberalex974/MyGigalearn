@@ -1,0 +1,4 @@
+Name,BallPosX,BallPosY,BallPosZ,BallVelX,BallVelY,BallVelZ,CarPosX,CarPosY,CarPosZ,CarVelX,CarVelY,CarVelZ,CarYaw,CarPitch,CarRoll,CarBoost
+Dojo_AttackCenter,0,2500,800,0,0,-200,0,-150,20,0,0,0,0,0,0,95
+Dojo_DefenseWall,0,-2000,300,0,0,0,0,2200,15,0,0,0,3.14159,0,0,100
+Dojo_AerialLaunch,1000,0,600,0,0,0,1400,-600,400,0,0,0,0.5,0,0,80

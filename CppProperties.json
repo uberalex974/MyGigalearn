@@ -1,0 +1,22 @@
+{
+  "configurations": [
+    {
+      "name": "x64-RelWithDebInfo",
+      "compilerPath": "cl.exe",
+      "cStandard": "c17",
+      "cppStandard": "c++20",
+      "includePath": [
+        "${env.INCLUDE}",
+        "${workspaceRoot}\\**"
+      ],
+      "defines": [
+        "WIN32",
+        "NDEBUG",
+        "UNICODE",
+        "_UNICODE"
+      ],
+      "intelliSenseMode": "windows-msvc-x64",
+      "compileCommands": "${workspaceRoot}\\out\\build\\x64-RelWithDebInfo\\compile_commands.json"
+    }
+  ]
+}

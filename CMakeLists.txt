@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
-# Forcer temporairement nvcc à accepter un compilateur hôte non supporté.
-# DOIT être défini avant tout appel activant CUDA (project / find_package).
+# Forcer temporairement nvcc ï¿½ accepter un compilateur hï¿½te non supportï¿½.
+# DOIT ï¿½tre dï¿½fini avant tout appel activant CUDA (project / find_package).
 if(NOT DEFINED CMAKE_CUDA_FLAGS_INIT)
   set(CMAKE_CUDA_FLAGS_INIT "--allow-unsupported-compiler" CACHE STRING "Initial CUDA flags" FORCE)
 else()
@@ -15,7 +15,8 @@ else()
 endif()
 
 project(GigaLearnBot LANGUAGES CXX)
-
+string(REPLACE "\\" "\\\\" GIGALEARN_PROJECT_SOURCE_DIR_ESCAPED "${PROJECT_SOURCE_DIR}")
+add_compile_definitions(GGL_PROJECT_ROOT_SOURCE_DIR="${GIGALEARN_PROJECT_SOURCE_DIR_ESCAPED}")
 # -----------------------------
 # C++ STANDARD
 # -----------------------------
@@ -33,9 +34,9 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 
 # -----------------------------
 # LIBTORCH CUDA 13 LOCAL
-# - On privilégie libtorch-cu13 à la racine du projet
+# - On privilï¿½gie libtorch-cu13 ï¿½ la racine du projet
 #   C:\Giga\GigaLearnCPP-Leak\libtorch-cu13
-# - Ça donne un Torch_DIR propre pour les sous-projets
+# - ï¿½a donne un Torch_DIR propre pour les sous-projets
 # -----------------------------
 if (EXISTS "${PROJECT_SOURCE_DIR}/libtorch-cu13")
     message(STATUS "Using LibTorch (CUDA 13) from libtorch-cu13")
@@ -68,7 +69,7 @@ file(GLOB_RECURSE GIGALEARNBOT_SOURCES
 
 add_executable(GigaLearnBot ${GIGALEARNBOT_SOURCES} "src/Scenario.h")
 
-# Assure que le linker traite bien ça comme du C++
+# Assure que le linker traite bien ï¿½a comme du C++
 set_target_properties(GigaLearnBot PROPERTIES
     LINKER_LANGUAGE CXX
 )
@@ -94,3 +95,4 @@ target_link_libraries(GigaLearnBot
         GigaLearnCPP
         RLBotCPP
 )
+

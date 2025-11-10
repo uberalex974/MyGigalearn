@@ -1,0 +1,11 @@
+{
+  "training_phase": "auto",
+  "game_mode": "scenario",
+  "reward_function": "skill_based",
+  "load_pretrained_model_path": "",
+  "num_games": 256,
+  "scenario_reward_log_interval": 512,
+  "auto_switch": true,
+  "auto_switch_threshold": 120.0,
+  "auto_switch_min_samples": 256
+}

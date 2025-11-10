@@ -1,45 +1,111 @@
 #include <GigaLearnCPP/Learner.h>
 
-#include <RLGymCPP/Rewards/CommonRewards.h>
-#include <RLGymCPP/Rewards/ZeroSumReward.h>
-#include <RLGymCPP/TerminalConditions/NoTouchCondition.h>
-#include <RLGymCPP/TerminalConditions/GoalScoreCondition.h>
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <iostream>
+#include <limits>
+#include <memory>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <nlohmann/json.hpp>
+#include <RLGymCPP/ActionParsers/DefaultAction.h>
 #include <RLGymCPP/OBSBuilders/AdvancedObs.h>
+#include <RLGymCPP/Rewards/CommonRewards.h>
+#include <RLGymCPP/Rewards/Tactical1v1Reward.h>
+#include <RLGymCPP/Rewards/ZeroSumReward.h>
 #include <RLGymCPP/StateSetters/KickoffState.h>
 #include <RLGymCPP/StateSetters/RandomState.h>
-#include <RLGymCPP/ActionParsers/DefaultAction.h>
+#include <RLGymCPP/TerminalConditions/GoalScoreCondition.h>
+#include <RLGymCPP/TerminalConditions/NoTouchCondition.h>
+
+#include "CurriculumManager.h"
+#include "PhaseAwareReward.h"
+#include "ScenarioGenerator.h"
 
 #include <cstdlib> // pour rand()
 
 using namespace GGL;   // GigaLearn
 using namespace RLGC;  // RLGymCPP
+using namespace MyGL;
+
+namespace {
+    struct CurriculumConfig {
+        std::string trainingPhase = "auto";
+        std::string gameMode = "scenario";
+        std::string rewardFunction = "skill_based";
+        std::filesystem::path loadPretrainedModelPath = {};
+        int numGames = 256;
+        int scenarioRewardLogInterval = 512;
+        bool autoSwitch = true;
+        double autoSwitchThreshold = 120.0;
+        int autoSwitchMinSamples = 256;
+    };
+
+    CurriculumConfig LoadCurriculumConfig(const std::filesystem::path& path) {
+        CurriculumConfig config;
+        if (!std::filesystem::exists(path))
+            return config;
+
+        std::ifstream file(path);
+        if (!file) {
+            std::cerr << "[ExampleMain] Failed to read config at " << path << "\n";
+            return config;
+        }
+
+        try {
+            auto json = nlohmann::json::parse(file);
+            config.trainingPhase = json.value("training_phase", config.trainingPhase);
+            config.gameMode = json.value("game_mode", config.gameMode);
+            config.rewardFunction = json.value("reward_function", config.rewardFunction);
+            config.numGames = json.value("num_games", config.numGames);
+            config.scenarioRewardLogInterval = json.value("scenario_reward_log_interval", config.scenarioRewardLogInterval);
+            std::string loadPath = json.value("load_pretrained_model_path", std::string{});
+            if (!loadPath.empty())
+                config.loadPretrainedModelPath = std::filesystem::path(loadPath);
+            config.autoSwitch = json.contains("auto_switch") ? json.value("auto_switch", config.autoSwitch) : (config.trainingPhase == "auto");
+            config.autoSwitchThreshold = json.value("auto_switch_threshold", config.autoSwitchThreshold);
+            config.autoSwitchMinSamples = json.value("auto_switch_min_samples", config.autoSwitchMinSamples);
+        } catch (std::exception& e) {
+            std::cerr << "[ExampleMain] Failed to parse config: " << e.what() << "\n";
+        }
+
+        return config;
+    }
+
+    std::vector<PhaseAwareReward::Entry> BuildSkillRewards() {
+        std::vector<PhaseAwareReward::Entry> entries;
+        entries.emplace_back(std::make_unique<AirReward>(), 0.25f);
+        entries.emplace_back(std::make_unique<FaceBallReward>(), 0.25f);
+        entries.emplace_back(std::make_unique<VelocityPlayerToBallReward>(), 4.f);
+        entries.emplace_back(std::make_unique<StrongTouchReward>(20, 100), 60);
+        entries.emplace_back(std::make_unique<ZeroSumReward>(new VelocityBallToGoalReward(), 1), 2.0f);
+        entries.emplace_back(std::make_unique<PickupBoostReward>(), 10.f);
+        entries.emplace_back(std::make_unique<SaveBoostReward>(), 0.2f);
+        entries.emplace_back(std::make_unique<ZeroSumReward>(new BumpReward(), 0.5f), 20);
+        entries.emplace_back(std::make_unique<ZeroSumReward>(new DemoReward(), 0.5f), 80);
+        entries.emplace_back(std::make_unique<GoalReward>(), 150);
+        return entries;
+    }
+
+    std::vector<PhaseAwareReward::Entry> BuildTacticalRewards() {
+        std::vector<PhaseAwareReward::Entry> entries;
+        entries.emplace_back(std::make_unique<Tactical1v1Reward>(), 1.f);
+        return entries;
+    }
+}
 
 // Create the RLGymCPP environment for each of our games
 EnvCreateResult EnvCreateFunc(int index) {
-    // These are ok rewards that will produce a scoring bot in ~100m steps
-    std::vector<WeightedReward> rewards = {
-
-        // Movement
-        { new AirReward(), 0.25f },
-
-        // Player-ball
-        { new FaceBallReward(), 0.25f },
-        { new VelocityPlayerToBallReward(), 4.f },
-        { new StrongTouchReward(20, 100), 60 },
-
-        // Ball-goal
-        { new ZeroSumReward(new VelocityBallToGoalReward(), 1), 2.0f },
-
-        // Boost
-        { new PickupBoostReward(), 10.f },
-        { new SaveBoostReward(), 0.2f },
-
-        // Game events
-        { new ZeroSumReward(new BumpReward(), 0.5f), 20 },
-        { new ZeroSumReward(new DemoReward(), 0.5f), 80 },
-        { new GoalReward(), 150 }
-    };
-
+    auto reward = new PhaseAwareReward(
+        MyGL::CurriculumManager::Instance(),
+        BuildSkillRewards(),
+        BuildTacticalRewards()
+    );
+    std::vector<WeightedReward> rewards = { { reward, 1.f } };
     std::vector<TerminalCondition*> terminalConditions = {
         new NoTouchCondition(10),
         new GoalScoreCondition()
@@ -66,6 +132,41 @@ EnvCreateResult EnvCreateFunc(int index) {
 }
 
 void StepCallback(Learner* learner, const std::vector<GameState>& states, Report& report) {
+    auto& manager = MyGL::CurriculumManager::Instance();
+    if (learner->envSet) {
+        auto& envState = learner->envSet->state;
+        for (int arenaIdx = 0; arenaIdx < states.size(); ++arenaIdx) {
+            std::string scenarioKey = states[arenaIdx].scenarioName.empty()
+                ? "Default"
+                : states[arenaIdx].scenarioName;
+
+            int playerStart = envState.arenaPlayerStartIdx[arenaIdx];
+            double totalReward = 0.0;
+            for (int playerIdx = 0; playerIdx < states[arenaIdx].players.size(); ++playerIdx) {
+                totalReward += envState.rewards[playerStart + playerIdx];
+            }
+
+            manager.ObserveScenarioReward(scenarioKey, totalReward);
+        }
+
+        if (auto averages = manager.CollectScenarioAverages()) {
+            double bestAverage = std::numeric_limits<double>::lowest();
+            for (const auto& entry : *averages) {
+                report["Reward/" + entry.first] = entry.second;
+                bestAverage = std::max(bestAverage, entry.second);
+            }
+            report["Curriculum/Phase"] = manager.CurrentPhase() == MyGL::CurriculumPhase::Arena;
+            if (bestAverage > std::numeric_limits<double>::lowest()) {
+                double threshold = manager.AutoSwitchThreshold();
+                if (threshold > 0.0) {
+                    double progress = std::min(bestAverage / threshold, 1.0);
+                    report["Curriculum/AutoSwitchProgress"] = progress;
+                    report["Curriculum/AutoSwitchTarget"] = threshold;
+                }
+            }
+        }
+    }
+
     // To prevent expensive metrics from eating at performance, we will only run them on 1/4th of steps
     // This doesn't really matter unless you have expensive metrics (which this example doesn't)
     bool doExpensiveMetrics = (rand() % 4) == 0;
@@ -101,13 +202,64 @@ int main(int argc, char* argv[]) {
     // Make configuration for the learner
     LearnerConfig cfg = {};
 
+#if defined(GGL_PROJECT_ROOT_SOURCE_DIR)
+    std::filesystem::path projectRoot = std::filesystem::path(GGL_PROJECT_ROOT_SOURCE_DIR);
+#else
+    std::filesystem::path projectRoot = std::filesystem::current_path();
+#endif
+
+    auto trainingConfigPath = projectRoot / "config" / "training_config.json";
+    auto curriculum = LoadCurriculumConfig(trainingConfigPath);
+
+    cfg.numGames = curriculum.numGames;
+    cfg.scenarioRewardLogInterval = curriculum.scenarioRewardLogInterval;
+    cfg.loadPretrainedModelPath = curriculum.loadPretrainedModelPath;
+
+    MyGL::CurriculumParameters params = {};
+    params.initialPhase = (curriculum.trainingPhase == "arena")
+        ? MyGL::CurriculumPhase::Arena
+        : MyGL::CurriculumPhase::Dojo;
+    params.autoSwitch = curriculum.autoSwitch;
+    params.logInterval = curriculum.scenarioRewardLogInterval;
+    params.autoSwitchThreshold = curriculum.autoSwitchThreshold;
+    params.autoSwitchMinSamples = curriculum.autoSwitchMinSamples;
+
+    auto& manager = MyGL::CurriculumManager::Instance();
+    manager.Configure(params);
+    manager.SetPhaseChangeCallback([](MyGL::CurriculumPhase phase) {
+        std::cout << "[Curriculum] Switched to phase " << (phase == MyGL::CurriculumPhase::Arena ? "Arena" : "Dojo") << "\n";
+    });
+
+    bool wantCurriculum = (curriculum.trainingPhase != "arena") || (curriculum.gameMode == "scenario");
+    std::shared_ptr<MyGL::ScenarioGenerator> scenarioGenerator;
+    if (wantCurriculum) {
+        auto scenarioCsvPath = projectRoot / "src" / "scenarios.csv";
+        scenarioGenerator = std::make_shared<MyGL::ScenarioGenerator>(scenarioCsvPath);
+        if (!scenarioGenerator->HasScenarios()) {
+            std::cerr << "[ExampleMain] ScenarioGenerator did not find scenarios at " << scenarioCsvPath << "\n";
+        }
+    }
+
+    if (scenarioGenerator) {
+        cfg.scenarioProvider = [scenarioGenerator](int /*arenaIdx*/) -> std::optional<MyGL::Scenario> {
+            if (!MyGL::CurriculumManager::Instance().UseScenarioCurriculum())
+                return std::nullopt;
+            if (!scenarioGenerator->HasScenarios())
+                return std::nullopt;
+            return scenarioGenerator->GenerateRandomScenario();
+        };
+    } else {
+        cfg.scenarioProvider = nullptr;
+    }
+
+    std::cout << "[ExampleMain] Training phase: " << curriculum.trainingPhase
+        << ", game mode: " << curriculum.gameMode
+        << ", reward function: " << curriculum.rewardFunction << "\n";
+
     cfg.deviceType = LearnerDeviceType::GPU_CUDA;
 
     cfg.tickSkip = 8;
     cfg.actionDelay = cfg.tickSkip - 1; // Normal value in other RLGym frameworks
-
-    // Play around with this to see what the optimal is for your machine, more games will consume more RAM
-    cfg.numGames = 256;
 
     // Leave this empty to use a random seed each run
     // The random seed can have a strong effect on the outcome of a run
